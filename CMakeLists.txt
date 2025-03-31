@@ -33,6 +33,7 @@ option(MLX_BUILD_EXAMPLES "Build examples for mlx" ON)
 option(MLX_BUILD_BENCHMARKS "Build benchmarks for mlx" OFF)
 option(MLX_BUILD_PYTHON_BINDINGS "Build python bindings for mlx" OFF)
 option(MLX_BUILD_METAL "Build metal backend" ON)
+option(MLX_BUILD_ROCM "Build ROCm backend" OFF)
 option(MLX_BUILD_CPU "Build cpu backend" ON)
 option(MLX_METAL_DEBUG "Enhance metal debug workflow" OFF)
 option(MLX_ENABLE_X64_MAC "Enable building for x64 macOS" OFF)
@@ -75,7 +76,9 @@ include(FetchContent)
 # Avoid warning about DOWNLOAD_EXTRACT_TIMESTAMP in CMake 3.24:
 cmake_policy(SET CMP0135 NEW)
 
-add_library(mlx)
+if(MLX_BUILD_ROCM)
+  enable_language(ROCM)
+endif()
 
 if(MLX_BUILD_METAL)
   set(METAL_LIB "-framework Metal")
