@@ -12,13 +12,13 @@ if(NOT MLX_VERSION)
   set(MLX_VERSION ${MLX_PROJECT_VERSION})
 else()
   string(REGEX REPLACE "^([0-9]+\.[0-9]+\.[0-9]+).*" "\\1" MLX_PROJECT_VERSION
-                       ${MLX_VERSION})
+          ${MLX_VERSION})
 endif()
 
 project(
-  mlx
-  LANGUAGES C CXX
-  VERSION ${MLX_PROJECT_VERSION})
+        mlx
+        LANGUAGES C CXX
+        VERSION ${MLX_PROJECT_VERSION})
 
 # ----------------------------- Setup -----------------------------
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
@@ -33,8 +33,9 @@ option(MLX_BUILD_EXAMPLES "Build examples for mlx" ON)
 option(MLX_BUILD_BENCHMARKS "Build benchmarks for mlx" OFF)
 option(MLX_BUILD_PYTHON_BINDINGS "Build python bindings for mlx" OFF)
 option(MLX_BUILD_METAL "Build metal backend" ON)
-option(MLX_BUILD_ROCM "Build ROCm backend" OFF)
 option(MLX_BUILD_CPU "Build cpu backend" ON)
+option(MLX_BUILD_CUDA "Build cuda backend" OFF)
+option(MLX_BUILD_ROCM "Build rocm backend" OFF)
 option(MLX_METAL_DEBUG "Enhance metal debug workflow" OFF)
 option(MLX_ENABLE_X64_MAC "Enable building for x64 macOS" OFF)
 option(MLX_BUILD_GGUF "Include support for GGUF format" ON)
@@ -45,19 +46,19 @@ option(BUILD_SHARED_LIBS "Build mlx as a shared library" OFF)
 
 # --------------------- Processor tests -------------------------
 message(
-  STATUS
-    "Building MLX for ${CMAKE_SYSTEM_PROCESSOR} processor on ${CMAKE_SYSTEM_NAME}"
+        STATUS
+        "Building MLX for ${CMAKE_SYSTEM_PROCESSOR} processor on ${CMAKE_SYSTEM_NAME}"
 )
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
     if(NOT MLX_ENABLE_X64_MAC)
       message(
-        FATAL_ERROR
-          "Building for x86_64 on macOS is not supported."
-          " If you are on an Apple silicon system, check the build"
-          " documentation for possible fixes: "
-          "https://ml-explore.github.io/mlx/build/html/install.html#build-from-source"
+              FATAL_ERROR
+              "Building for x86_64 on macOS is not supported."
+              " If you are on an Apple silicon system, check the build"
+              " documentation for possible fixes: "
+              "https://ml-explore.github.io/mlx/build/html/install.html#build-from-source"
       )
     else()
       set(MLX_BUILD_METAL OFF)
@@ -76,14 +77,47 @@ include(FetchContent)
 # Avoid warning about DOWNLOAD_EXTRACT_TIMESTAMP in CMake 3.24:
 cmake_policy(SET CMP0135 NEW)
 
-if(MLX_BUILD_ROCM)
-  enable_language(ROCM)
-endif()
+add_library(mlx)
 
 if(MLX_BUILD_METAL)
   set(METAL_LIB "-framework Metal")
   set(FOUNDATION_LIB "-framework Foundation")
   set(QUARTZ_LIB "-framework QuartzCore")
+endif()
+
+if(MLX_BUILD_CUDA)
+  enable_language(CUDA)
+endif()
+
+if(MLX_BUILD_ROCM)
+  # Find required ROCm components
+  find_package(hip REQUIRED)
+  find_package(rocblas REQUIRED)
+  find_package(rocprim REQUIRED)
+  find_package(hipthrust REQUIRED)
+  find_package(hipcub REQUIRED)
+
+  # Enable HIP language support
+  enable_language(HIP)
+
+  # Set default target architectures if not specified
+  if(NOT DEFINED MLX_ROCM_ARCHITECTURES)
+    set(MLX_ROCM_ARCHITECTURES "gfx900;gfx906;gfx908;gfx90a;gfx1030" CACHE STRING "ROCm architectures")
+  endif()
+
+  message(STATUS "Building for ROCm architectures: ${MLX_ROCM_ARCHITECTURES}")
+
+  # Set HIP compiler flags for target architectures
+  foreach(arch ${MLX_ROCM_ARCHITECTURES})
+    list(APPEND HIP_ARCH_FLAGS "--amdgpu-target=${arch}")
+  endforeach()
+  set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} ${HIP_ARCH_FLAGS}")
+
+  # Include HIP directories
+  target_include_directories(mlx PRIVATE ${HIP_INCLUDE_DIRS})
+
+  # Link ROCm libraries
+  target_link_libraries(mlx PRIVATE roc::rocblas hip::hipblas)
 endif()
 
 if(MLX_BUILD_METAL AND NOT METAL_LIB)
@@ -99,33 +133,33 @@ elseif(MLX_BUILD_METAL)
 
   # Throw an error if xcrun not found
   execute_process(
-    COMMAND zsh "-c" "/usr/bin/xcrun -sdk macosx --show-sdk-version"
-    OUTPUT_VARIABLE MACOS_SDK_VERSION COMMAND_ERROR_IS_FATAL ANY)
+          COMMAND zsh "-c" "/usr/bin/xcrun -sdk macosx --show-sdk-version"
+          OUTPUT_VARIABLE MACOS_SDK_VERSION COMMAND_ERROR_IS_FATAL ANY)
 
   if(${MACOS_SDK_VERSION} LESS 14.0)
     message(
-      FATAL_ERROR
-        "MLX requires macOS SDK >= 14.0 to be built with MLX_BUILD_METAL=ON")
+            FATAL_ERROR
+            "MLX requires macOS SDK >= 14.0 to be built with MLX_BUILD_METAL=ON")
   endif()
   message(STATUS "Building with macOS SDK version ${MACOS_SDK_VERSION}")
 
   set(METAL_CPP_URL
-      https://developer.apple.com/metal/cpp/files/metal-cpp_macOS15_iOS18.zip)
+          https://developer.apple.com/metal/cpp/files/metal-cpp_macOS15_iOS18.zip)
 
   if(NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
     set(XCRUN_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
   endif()
   execute_process(
-    COMMAND
-      zsh "-c"
-      "echo \"__METAL_VERSION__\" | xcrun -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1 | tr -d '\n'"
-    OUTPUT_VARIABLE MLX_METAL_VERSION COMMAND_ERROR_IS_FATAL ANY)
+          COMMAND
+          zsh "-c"
+          "echo \"__METAL_VERSION__\" | xcrun -sdk macosx metal ${XCRUN_FLAGS} -E -x metal -P - | tail -1 | tr -d '\n'"
+          OUTPUT_VARIABLE MLX_METAL_VERSION COMMAND_ERROR_IS_FATAL ANY)
   FetchContent_Declare(metal_cpp URL ${METAL_CPP_URL})
 
   FetchContent_MakeAvailable(metal_cpp)
   target_include_directories(
-    mlx PUBLIC $<BUILD_INTERFACE:${metal_cpp_SOURCE_DIR}>
-               $<INSTALL_INTERFACE:include/metal_cpp>)
+          mlx PUBLIC $<BUILD_INTERFACE:${metal_cpp_SOURCE_DIR}>
+          $<INSTALL_INTERFACE:include/metal_cpp>)
   target_link_libraries(mlx PUBLIC ${METAL_LIB} ${FOUNDATION_LIB} ${QUARTZ_LIB})
 endif()
 
@@ -138,13 +172,13 @@ if(WIN32)
   endif()
   # Windows implementation of dlfcn.h APIs.
   FetchContent_Declare(
-    dlfcn-win32
-    GIT_REPOSITORY https://github.com/dlfcn-win32/dlfcn-win32.git
-    GIT_TAG v1.4.1
-    EXCLUDE_FROM_ALL)
+          dlfcn-win32
+          GIT_REPOSITORY https://github.com/dlfcn-win32/dlfcn-win32.git
+          GIT_TAG v1.4.1
+          EXCLUDE_FROM_ALL)
   block()
-  set(BUILD_SHARED_LIBS OFF)
-  FetchContent_MakeAvailable(dlfcn-win32)
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_MakeAvailable(dlfcn-win32)
   endblock()
   target_include_directories(mlx PRIVATE "${dlfcn-win32_SOURCE_DIR}/src")
   target_link_libraries(mlx PRIVATE dl)
@@ -167,24 +201,24 @@ if(MLX_BUILD_CPU)
   elseif(MLX_BUILD_BLAS_FROM_SOURCE)
     # Download and build OpenBLAS from source code.
     FetchContent_Declare(
-      openblas
-      GIT_REPOSITORY https://github.com/OpenMathLib/OpenBLAS.git
-      GIT_TAG v0.3.28
-      EXCLUDE_FROM_ALL)
+            openblas
+            GIT_REPOSITORY https://github.com/OpenMathLib/OpenBLAS.git
+            GIT_TAG v0.3.28
+            EXCLUDE_FROM_ALL)
     set(BUILD_STATIC_LIBS ON) # link statically
     set(NOFORTRAN ON) # msvc has no fortran compiler
     FetchContent_MakeAvailable(openblas)
     target_link_libraries(mlx PRIVATE openblas)
     target_include_directories(
-      mlx PRIVATE "${openblas_SOURCE_DIR}/lapack-netlib/LAPACKE/include"
-                  "${CMAKE_BINARY_DIR}/generated" "${CMAKE_BINARY_DIR}")
+            mlx PRIVATE "${openblas_SOURCE_DIR}/lapack-netlib/LAPACKE/include"
+            "${CMAKE_BINARY_DIR}/generated" "${CMAKE_BINARY_DIR}")
   else()
     if(${CMAKE_HOST_APPLE})
       # The blas shipped in macOS SDK is not supported, search homebrew for
       # openblas instead.
       set(BLA_VENDOR OpenBLAS)
       set(LAPACK_ROOT
-          "${LAPACK_ROOT};$ENV{LAPACK_ROOT};/usr/local/opt/openblas")
+              "${LAPACK_ROOT};$ENV{LAPACK_ROOT};/usr/local/opt/openblas")
     endif()
     # Search and link with lapack.
     find_package(LAPACK REQUIRED)
@@ -192,7 +226,7 @@ if(MLX_BUILD_CPU)
       message(FATAL_ERROR "Must have LAPACK installed")
     endif()
     find_path(LAPACK_INCLUDE_DIRS lapacke.h /usr/include /usr/local/include
-              /usr/local/opt/openblas/include)
+            /usr/local/opt/openblas/include)
     message(STATUS "Lapack lib " ${LAPACK_LIBRARIES})
     message(STATUS "Lapack include " ${LAPACK_INCLUDE_DIRS})
     target_include_directories(mlx PRIVATE ${LAPACK_INCLUDE_DIRS})
@@ -205,7 +239,7 @@ if(MLX_BUILD_CPU)
     endif()
     # TODO find a cleaner way to do this
     find_path(BLAS_INCLUDE_DIRS cblas.h /usr/include /usr/local/include
-              $ENV{BLAS_HOME}/include)
+            $ENV{BLAS_HOME}/include)
     message(STATUS "Blas lib " ${BLAS_LIBRARIES})
     message(STATUS "Blas include " ${BLAS_INCLUDE_DIRS})
     target_include_directories(mlx PRIVATE ${BLAS_INCLUDE_DIRS})
@@ -217,36 +251,36 @@ endif()
 
 message(STATUS "Downloading json")
 FetchContent_Declare(
-  json
-  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+        json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
 FetchContent_MakeAvailable(json)
 target_include_directories(
-  mlx PRIVATE $<BUILD_INTERFACE:${json_SOURCE_DIR}/single_include/nlohmann>)
+        mlx PRIVATE $<BUILD_INTERFACE:${json_SOURCE_DIR}/single_include/nlohmann>)
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/mlx)
 
 target_include_directories(
-  mlx PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>
-             $<INSTALL_INTERFACE:include>)
+        mlx PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>
+        $<INSTALL_INTERFACE:include>)
 
 FetchContent_Declare(
-  fmt
-  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG 10.2.1
-  EXCLUDE_FROM_ALL)
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG 10.2.1
+        EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(fmt)
 target_link_libraries(mlx PRIVATE $<BUILD_INTERFACE:fmt::fmt-header-only>)
 
 if(MLX_BUILD_PYTHON_BINDINGS)
   message(STATUS "Building Python bindings.")
   find_package(
-    Python 3.8
-    COMPONENTS Interpreter Development.Module
-    REQUIRED)
+          Python 3.8
+          COMPONENTS Interpreter Development.Module
+          REQUIRED)
   execute_process(
-    COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    OUTPUT_VARIABLE nanobind_ROOT)
+          COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          OUTPUT_VARIABLE nanobind_ROOT)
   find_package(nanobind CONFIG REQUIRED)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/python/src)
 endif()
@@ -269,31 +303,32 @@ include(GNUInstallDirs)
 
 # Install library
 install(
-  TARGETS mlx
-  EXPORT MLXTargets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  INCLUDES
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+        TARGETS mlx
+        EXPORT MLXTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        INCLUDES
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Install headers
 install(
-  DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/mlx
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  COMPONENT headers
-  FILES_MATCHING
-  PATTERN "*.h"
-  PATTERN "backend/metal/kernels.h" EXCLUDE)
+        DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/mlx
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        COMPONENT headers
+        FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.hip"
+        PATTERN "backend/metal/kernels.h" EXCLUDE)
 
 # Install metal dependencies
 if(MLX_BUILD_METAL)
 
   # Install metal cpp
   install(
-    DIRECTORY ${metal_cpp_SOURCE_DIR}/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/metal_cpp
-    COMPONENT metal_cpp_source)
+          DIRECTORY ${metal_cpp_SOURCE_DIR}/
+          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/metal_cpp
+          COMPONENT metal_cpp_source)
 
 endif()
 
@@ -303,23 +338,23 @@ set(MLX_CMAKE_BUILD_VERSION_CONFIG ${CMAKE_BINARY_DIR}/MLXConfigVersion.cmake)
 set(MLX_CMAKE_INSTALL_MODULE_DIR share/cmake/MLX)
 
 install(
-  EXPORT MLXTargets
-  FILE MLXTargets.cmake
-  DESTINATION ${MLX_CMAKE_INSTALL_MODULE_DIR})
+        EXPORT MLXTargets
+        FILE MLXTargets.cmake
+        DESTINATION ${MLX_CMAKE_INSTALL_MODULE_DIR})
 
 include(CMakePackageConfigHelpers)
 
 write_basic_package_version_file(
-  ${MLX_CMAKE_BUILD_VERSION_CONFIG}
-  COMPATIBILITY SameMajorVersion
-  VERSION ${MLX_VERSION})
+        ${MLX_CMAKE_BUILD_VERSION_CONFIG}
+        COMPATIBILITY SameMajorVersion
+        VERSION ${MLX_VERSION})
 
 configure_package_config_file(
-  ${CMAKE_CURRENT_LIST_DIR}/mlx.pc.in ${MLX_CMAKE_BUILD_CONFIG}
-  INSTALL_DESTINATION ${MLX_CMAKE_INSTALL_MODULE_DIR}
-  NO_CHECK_REQUIRED_COMPONENTS_MACRO
-  PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR
-            MLX_CMAKE_INSTALL_MODULE_DIR)
+        ${CMAKE_CURRENT_LIST_DIR}/mlx.pc.in ${MLX_CMAKE_BUILD_CONFIG}
+        INSTALL_DESTINATION ${MLX_CMAKE_INSTALL_MODULE_DIR}
+        NO_CHECK_REQUIRED_COMPONENTS_MACRO
+        PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR
+        MLX_CMAKE_INSTALL_MODULE_DIR)
 
 install(FILES ${MLX_CMAKE_BUILD_CONFIG} ${MLX_CMAKE_BUILD_VERSION_CONFIG}
         DESTINATION ${MLX_CMAKE_INSTALL_MODULE_DIR})
